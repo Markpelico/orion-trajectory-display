@@ -12,9 +12,13 @@ matplotlib.use('TkAgg')  # Use TkAgg backend for better integration
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+from mpl_toolkits.mplot3d import Axes3D
 import numpy as np
 from collections import deque
 import time
+import csv
+from datetime import datetime
+import os
 
 # Python 2/3 compatibility
 try:
@@ -201,15 +205,25 @@ class FlightTrajectoryDisplay:
         self.pos_x_history = deque(maxlen=max_points)
         self.pos_y_history = deque(maxlen=max_points)
         self.pos_z_history = deque(maxlen=max_points)
+        self.vel_x_history = deque(maxlen=max_points)
+        self.vel_y_history = deque(maxlen=max_points)
+        self.vel_z_history = deque(maxlen=max_points)
+        self.acc_x_history = deque(maxlen=max_points)
+        self.acc_y_history = deque(maxlen=max_points)
+        self.acc_z_history = deque(maxlen=max_points)
         self.time_history = deque(maxlen=max_points)
         
         # Current axis pair for plotting
         self.axis_mode = "X-Y"  # Can be "X-Y", "Y-Z", or "X-Z"
         
+        # View mode (2D or 3D)
+        self.view_mode = "2D"  # Can be "2D" or "3D"
+        
         # Zoom state
         self.zoom_level = 1.0
         self.x_limits = None
         self.y_limits = None
+        self.z_limits = None
         
         # Setup UI
         self.setup_ui()
@@ -253,15 +267,22 @@ class FlightTrajectoryDisplay:
         view_frame = Frame(control_frame)
         view_frame.pack(side=LEFT, padx=10, pady=10)
         
-        Label(view_frame, text="View:").pack(side=LEFT, padx=5)
+        # 2D/3D Toggle
+        self.toggle_3d_btn = Button(view_frame, text="Switch to 3D", command=self.toggle_3d_view,
+                                      bg="purple", fg="white", width=12, font=("Arial", 9, "bold"))
+        self.toggle_3d_btn.pack(side=LEFT, padx=5)
+        
+        Label(view_frame, text="2D View:").pack(side=LEFT, padx=5)
         self.axis_var = tk.StringVar(value="X-Y")
         axis_options = ["X-Y", "Y-Z", "X-Z"]
-        axis_menu = ttk.Combobox(view_frame, textvariable=self.axis_var, 
+        self.axis_menu = ttk.Combobox(view_frame, textvariable=self.axis_var, 
                                   values=axis_options, state="readonly", width=8)
-        axis_menu.pack(side=LEFT, padx=5)
-        axis_menu.bind("<<ComboboxSelected>>", self.change_axis_mode)
+        self.axis_menu.pack(side=LEFT, padx=5)
+        self.axis_menu.bind("<<ComboboxSelected>>", self.change_axis_mode)
         
         Button(view_frame, text="Clear Trajectory", command=self.clear_trajectory).pack(side=LEFT, padx=10)
+        Button(view_frame, text="💾 Save Data", command=self.save_to_csv, 
+               bg="dodgerblue", fg="white").pack(side=LEFT, padx=5)
         
         # Zoom and quit controls
         control_btns_frame = Frame(control_frame)
@@ -331,11 +352,12 @@ class FlightTrajectoryDisplay:
         self.speed_label.pack(anchor=W, padx=5)
         
         # Plot panel (right side)
-        plot_frame = Frame(main_frame)
-        plot_frame.pack(side=RIGHT, fill=BOTH, expand=True)
+        self.plot_frame = Frame(main_frame)
+        self.plot_frame.pack(side=RIGHT, fill=BOTH, expand=True)
         
-        # Create matplotlib figure
-        self.fig, self.ax = plt.subplots(figsize=(8, 8))
+        # Create matplotlib figure (start with 2D)
+        self.fig = plt.figure(figsize=(8, 8))
+        self.ax = self.fig.add_subplot(111)
         self.line, = self.ax.plot([], [], 'b-', linewidth=1, label='Trajectory')
         self.current_pos, = self.ax.plot([], [], 'ro', markersize=8, label='Current Position')
         
@@ -347,7 +369,7 @@ class FlightTrajectoryDisplay:
         self.ax.set_aspect('equal', adjustable='datalim')
         
         # Embed matplotlib figure in Tkinter
-        self.canvas = FigureCanvasTkAgg(self.fig, master=plot_frame)
+        self.canvas = FigureCanvasTkAgg(self.fig, master=self.plot_frame)
         self.canvas.draw()
         self.canvas.get_tk_widget().pack(fill=BOTH, expand=True)
         
@@ -375,6 +397,13 @@ class FlightTrajectoryDisplay:
         self.is_running = False
         if self.update_id:
             self.root.after_cancel(self.update_id)
+        
+        # Auto-save data before disconnecting
+        if len(self.time_history) > 0:
+            filename = self.save_to_csv(auto_save=True)
+            if filename:
+                print("Simulation data automatically saved to: {}".format(filename))
+        
         self.trick_client.disconnect()
         self.status_label.config(text="Disconnected", fg="red")
         self.connect_btn.config(text="Connect", bg="green")
@@ -383,6 +412,61 @@ class FlightTrajectoryDisplay:
         """Change the axis pair being displayed."""
         self.axis_mode = self.axis_var.get()
         self.update_plot_labels()
+        self.update_plot()
+    
+    def toggle_3d_view(self):
+        """Toggle between 2D and 3D view modes."""
+        if self.view_mode == "2D":
+            # Switch to 3D
+            self.view_mode = "3D"
+            self.toggle_3d_btn.config(text="Switch to 2D")
+            self.axis_menu.config(state="disabled")  # Disable 2D axis selector in 3D mode
+            self.recreate_plot()
+        else:
+            # Switch to 2D
+            self.view_mode = "2D"
+            self.toggle_3d_btn.config(text="Switch to 3D")
+            self.axis_menu.config(state="readonly")  # Enable 2D axis selector
+            self.recreate_plot()
+    
+    def recreate_plot(self):
+        """Recreate the plot when switching between 2D and 3D."""
+        # Clear the current figure
+        self.fig.clear()
+        
+        if self.view_mode == "3D":
+            # Create 3D axes
+            self.ax = self.fig.add_subplot(111, projection='3d')
+            self.line, = self.ax.plot([], [], [], 'b-', linewidth=1, label='Trajectory')
+            self.current_pos, = self.ax.plot([], [], [], 'ro', markersize=8, label='Current Position')
+            
+            self.ax.set_xlabel('X (m)', fontsize=12)
+            self.ax.set_ylabel('Y (m)', fontsize=12)
+            self.ax.set_zlabel('Z (m)', fontsize=12)
+            self.ax.set_title('Orion Flight Trajectory (3D View)', fontsize=14, fontweight='bold')
+            self.ax.legend()
+            # Note: 3D plots don't support set_aspect('equal') directly
+        else:
+            # Create 2D axes
+            self.ax = self.fig.add_subplot(111)
+            self.line, = self.ax.plot([], [], 'b-', linewidth=1, label='Trajectory')
+            self.current_pos, = self.ax.plot([], [], 'ro', markersize=8, label='Current Position')
+            
+            self.update_plot_labels()
+            self.ax.grid(True, alpha=0.3)
+            self.ax.legend()
+            self.ax.set_aspect('equal', adjustable='datalim')
+        
+        # Reset zoom
+        self.zoom_level = 1.0
+        self.x_limits = None
+        self.y_limits = None
+        self.z_limits = None
+        
+        # Redraw canvas
+        self.canvas.draw()
+        
+        # Update plot with current data
         self.update_plot()
     
     def update_plot_labels(self):
@@ -405,8 +489,73 @@ class FlightTrajectoryDisplay:
         self.pos_x_history.clear()
         self.pos_y_history.clear()
         self.pos_z_history.clear()
+        self.vel_x_history.clear()
+        self.vel_y_history.clear()
+        self.vel_z_history.clear()
+        self.acc_x_history.clear()
+        self.acc_y_history.clear()
+        self.acc_z_history.clear()
         self.time_history.clear()
         self.update_plot()
+    
+    def save_to_csv(self, auto_save=False):
+        """
+        Save trajectory data to a CSV file.
+        
+        Args:
+            auto_save (bool): If True, automatically saves without user notification
+        """
+        if len(self.time_history) == 0:
+            if not auto_save:
+                print("No data to save!")
+            return None
+        
+        # Generate filename with timestamp
+        timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        filename = "orion_trajectory_{}.csv".format(timestamp)
+        
+        try:
+            with open(filename, 'w', newline='') as csvfile:
+                writer = csv.writer(csvfile)
+                
+                # Write header
+                writer.writerow([
+                    'Time (UTC sec)',
+                    'Position X (m)',
+                    'Position Y (m)',
+                    'Position Z (m)',
+                    'Velocity X (m/s)',
+                    'Velocity Y (m/s)',
+                    'Velocity Z (m/s)',
+                    'Acceleration X (m/s²)',
+                    'Acceleration Y (m/s²)',
+                    'Acceleration Z (m/s²)'
+                ])
+                
+                # Write data rows
+                for i in range(len(self.time_history)):
+                    writer.writerow([
+                        self.time_history[i],
+                        self.pos_x_history[i],
+                        self.pos_y_history[i],
+                        self.pos_z_history[i],
+                        self.vel_x_history[i],
+                        self.vel_y_history[i],
+                        self.vel_z_history[i],
+                        self.acc_x_history[i],
+                        self.acc_y_history[i],
+                        self.acc_z_history[i]
+                    ])
+            
+            if not auto_save:
+                print("Data saved to: {}".format(filename))
+                print("Total data points: {}".format(len(self.time_history)))
+            
+            return filename
+            
+        except Exception as e:
+            print("Error saving CSV file: {}".format(e))
+            return None
     
     def zoom_in(self):
         """Zoom in on the plot by 50%."""
@@ -423,6 +572,7 @@ class FlightTrajectoryDisplay:
         self.zoom_level = 1.0
         self.x_limits = None
         self.y_limits = None
+        self.z_limits = None
         self.update_plot()
     
     def apply_zoom(self):
@@ -430,33 +580,59 @@ class FlightTrajectoryDisplay:
         if len(self.pos_x_history) == 0:
             return
         
-        # Get data based on current axis mode
-        if self.axis_mode == "X-Y":
+        if self.view_mode == "3D":
+            # 3D zoom
             x_data = list(self.pos_x_history)
             y_data = list(self.pos_y_history)
-        elif self.axis_mode == "Y-Z":
-            x_data = list(self.pos_y_history)
-            y_data = list(self.pos_z_history)
-        elif self.axis_mode == "X-Z":
-            x_data = list(self.pos_x_history)
-            y_data = list(self.pos_z_history)
+            z_data = list(self.pos_z_history)
+            
+            # Calculate center and range
+            x_center = (max(x_data) + min(x_data)) / 2
+            y_center = (max(y_data) + min(y_data)) / 2
+            z_center = (max(z_data) + min(z_data)) / 2
+            
+            x_range = (max(x_data) - min(x_data)) / self.zoom_level
+            y_range = (max(y_data) - min(y_data)) / self.zoom_level
+            z_range = (max(z_data) - min(z_data)) / self.zoom_level
+            
+            # Set new limits
+            self.x_limits = [x_center - x_range/2, x_center + x_range/2]
+            self.y_limits = [y_center - y_range/2, y_center + y_range/2]
+            self.z_limits = [z_center - z_range/2, z_center + z_range/2]
+            
+            # Apply limits
+            self.ax.set_xlim(self.x_limits)
+            self.ax.set_ylim(self.y_limits)
+            self.ax.set_zlim(self.z_limits)
         else:
-            return
+            # 2D zoom - Get data based on current axis mode
+            if self.axis_mode == "X-Y":
+                x_data = list(self.pos_x_history)
+                y_data = list(self.pos_y_history)
+            elif self.axis_mode == "Y-Z":
+                x_data = list(self.pos_y_history)
+                y_data = list(self.pos_z_history)
+            elif self.axis_mode == "X-Z":
+                x_data = list(self.pos_x_history)
+                y_data = list(self.pos_z_history)
+            else:
+                return
+            
+            # Calculate center and range
+            x_center = (max(x_data) + min(x_data)) / 2
+            y_center = (max(y_data) + min(y_data)) / 2
+            
+            x_range = (max(x_data) - min(x_data)) / self.zoom_level
+            y_range = (max(y_data) - min(y_data)) / self.zoom_level
+            
+            # Set new limits
+            self.x_limits = [x_center - x_range/2, x_center + x_range/2]
+            self.y_limits = [y_center - y_range/2, y_center + y_range/2]
+            
+            # Apply limits
+            self.ax.set_xlim(self.x_limits)
+            self.ax.set_ylim(self.y_limits)
         
-        # Calculate center and range
-        x_center = (max(x_data) + min(x_data)) / 2
-        y_center = (max(y_data) + min(y_data)) / 2
-        
-        x_range = (max(x_data) - min(x_data)) / self.zoom_level
-        y_range = (max(y_data) - min(y_data)) / self.zoom_level
-        
-        # Set new limits
-        self.x_limits = [x_center - x_range/2, x_center + x_range/2]
-        self.y_limits = [y_center - y_range/2, y_center + y_range/2]
-        
-        # Apply limits
-        self.ax.set_xlim(self.x_limits)
-        self.ax.set_ylim(self.y_limits)
         self.canvas.draw_idle()
     
     def quit_application(self):
@@ -480,6 +656,12 @@ class FlightTrajectoryDisplay:
             self.pos_x_history.append(pos[0])
             self.pos_y_history.append(pos[1])
             self.pos_z_history.append(pos[2])
+            self.vel_x_history.append(vel[0])
+            self.vel_y_history.append(vel[1])
+            self.vel_z_history.append(vel[2])
+            self.acc_x_history.append(acc[0])
+            self.acc_y_history.append(acc[1])
+            self.acc_z_history.append(acc[2])
             self.time_history.append(t)
             
             # Update text displays
@@ -515,34 +697,60 @@ class FlightTrajectoryDisplay:
         if len(self.pos_x_history) == 0:
             return
         
-        # Get data based on current axis mode
-        if self.axis_mode == "X-Y":
+        if self.view_mode == "3D":
+            # 3D plotting
             x_data = list(self.pos_x_history)
             y_data = list(self.pos_y_history)
-        elif self.axis_mode == "Y-Z":
-            x_data = list(self.pos_y_history)
-            y_data = list(self.pos_z_history)
-        elif self.axis_mode == "X-Z":
-            x_data = list(self.pos_x_history)
-            y_data = list(self.pos_z_history)
+            z_data = list(self.pos_z_history)
+            
+            # Update line data
+            self.line.set_data(x_data, y_data)
+            self.line.set_3d_properties(z_data)
+            
+            # Update current position marker
+            if len(x_data) > 0:
+                self.current_pos.set_data([x_data[-1]], [y_data[-1]])
+                self.current_pos.set_3d_properties([z_data[-1]])
+            
+            # Apply zoom limits if set, otherwise auto-scale
+            if self.x_limits is not None and self.y_limits is not None and self.z_limits is not None:
+                self.ax.set_xlim(self.x_limits)
+                self.ax.set_ylim(self.y_limits)
+                self.ax.set_zlim(self.z_limits)
+            else:
+                # Auto-scale axes
+                self.ax.set_xlim([min(x_data), max(x_data)])
+                self.ax.set_ylim([min(y_data), max(y_data)])
+                self.ax.set_zlim([min(z_data), max(z_data)])
         else:
-            return
-        
-        # Update line data
-        self.line.set_data(x_data, y_data)
-        
-        # Update current position marker
-        if len(x_data) > 0:
-            self.current_pos.set_data([x_data[-1]], [y_data[-1]])
-        
-        # Apply zoom limits if set, otherwise auto-scale
-        if self.x_limits is not None and self.y_limits is not None:
-            self.ax.set_xlim(self.x_limits)
-            self.ax.set_ylim(self.y_limits)
-        else:
-            # Auto-scale axes
-            self.ax.relim()
-            self.ax.autoscale_view()
+            # 2D plotting - Get data based on current axis mode
+            if self.axis_mode == "X-Y":
+                x_data = list(self.pos_x_history)
+                y_data = list(self.pos_y_history)
+            elif self.axis_mode == "Y-Z":
+                x_data = list(self.pos_y_history)
+                y_data = list(self.pos_z_history)
+            elif self.axis_mode == "X-Z":
+                x_data = list(self.pos_x_history)
+                y_data = list(self.pos_z_history)
+            else:
+                return
+            
+            # Update line data
+            self.line.set_data(x_data, y_data)
+            
+            # Update current position marker
+            if len(x_data) > 0:
+                self.current_pos.set_data([x_data[-1]], [y_data[-1]])
+            
+            # Apply zoom limits if set, otherwise auto-scale
+            if self.x_limits is not None and self.y_limits is not None:
+                self.ax.set_xlim(self.x_limits)
+                self.ax.set_ylim(self.y_limits)
+            else:
+                # Auto-scale axes
+                self.ax.relim()
+                self.ax.autoscale_view()
         
         # Redraw
         self.canvas.draw_idle()

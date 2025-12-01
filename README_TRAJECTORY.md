@@ -2,13 +2,31 @@
 
 This is a real-time flight trajectory visualization tool that connects to NASA's Trick Simulation Environment to display the Orion spacecraft's position, velocity, and acceleration data.
 
+## Two Versions Available
+
+### 1. **Matplotlib Version** (`flight_trajectory_display.py`) - Standard
+- 2D and 3D visualization with toggle button
+- Good for most users
+- No additional dependencies beyond matplotlib
+
+### 2. **PyVista Version** (`flight_trajectory_display_pyvista.py`) - High Performance
+- GPU-accelerated 3D visualization
+- Smoother rendering for real-time data
+- Better for large datasets (10,000+ points)
+- Requires PyVista installation
+
 ## Features
 
 - **Real-time data connection** to Trick Variable Server
-- **2D trajectory plotting** with switchable axis views (X-Y, Y-Z, X-Z)
+- **2D and 3D trajectory plotting** with switchable views
+  - 2D: X-Y, Y-Z, X-Z plane views
+  - 3D: Full 3D interactive visualization
 - **Live state data display** for position, velocity, and acceleration vectors
-- **Historical trajectory tracking** (up to 1000 points)
+- **Historical trajectory tracking** (up to 1000-10000 points depending on version)
 - **Speed and statistics** calculations
+- **Auto-save data** to CSV when simulation disconnects
+- **Manual save** button to export data anytime
+- **Zoom controls** for both 2D and 3D views
 
 ## Installation
 
@@ -17,14 +35,21 @@ This is a real-time flight trajectory visualization tool that connects to NASA's
 1. Python 2.7 or Python 3.x
 2. Required Python packages:
 
+**For Matplotlib Version (Standard):**
 ```bash
 pip install matplotlib numpy
+```
+
+**For PyVista Version (High Performance):**
+```bash
+pip install matplotlib numpy pyvista pyvistaqt PyQt5
 ```
 
 Or use the requirements file:
 
 ```bash
 pip install -r requirements.txt
+# For PyVista version, uncomment the PyVista lines in requirements.txt first
 ```
 
 ## Usage
@@ -44,14 +69,21 @@ Follow the procedure in the PDF document to start the SOC VM simulation:
 
 Once your Trick simulation is running, start the display:
 
+**Matplotlib Version (Standard):**
 ```bash
 python flight_trajectory_display.py
 ```
 
-Or specify a custom host and port:
+**PyVista Version (High Performance 3D):**
+```bash
+python flight_trajectory_display_pyvista.py
+```
+
+Or specify a custom host and port for either version:
 
 ```bash
 python flight_trajectory_display.py 192.168.121.35 7108
+python flight_trajectory_display_pyvista.py 192.168.121.35 7108
 ```
 
 ### Step 3: Connect to Trick
@@ -63,9 +95,54 @@ python flight_trajectory_display.py 192.168.121.35 7108
 
 ### Step 4: Use the Display
 
-- **Change View**: Use the dropdown to switch between X-Y, Y-Z, and X-Z plane views
+**Matplotlib Version:**
+- **Toggle 2D/3D**: Click "Switch to 3D" button to toggle between 2D and 3D views
+- **Change 2D View**: Use the dropdown to switch between X-Y, Y-Z, and X-Z plane views (in 2D mode)
+- **Zoom**: Use the +/- buttons to zoom in/out, or click "Reset" to fit all data
 - **Clear Trajectory**: Click to clear the historical trajectory path
+- **Save Data**: Click "💾 Save Data" to export current trajectory to CSV file
 - **Monitor Data**: Watch the left panel for real-time position, velocity, and acceleration values
+- **Auto-save**: When you disconnect, data is automatically saved to a timestamped CSV file
+
+**PyVista Version:**
+- **3D View Only**: Always displays full 3D trajectory
+- **Rotate**: Click and drag in the 3D window to rotate the view
+- **Zoom**: Scroll to zoom in/out in the 3D window
+- **Save Data**: Click "💾 Save Data" to export current trajectory to CSV file
+- **Control Panel**: Separate Tkinter window for connection and data display
+- **Auto-save**: When you disconnect, data is automatically saved to a timestamped CSV file
+
+## CSV Data Export
+
+Both versions automatically save all trajectory data when you disconnect from the simulation:
+
+**File Format:** `orion_trajectory_YYYY-MM-DD_HH-MM-SS.csv`
+
+**Data Columns:**
+- Time (UTC sec)
+- Position X, Y, Z (m)
+- Velocity X, Y, Z (m/s)
+- Acceleration X, Y, Z (m/s²)
+
+**Usage:**
+- Files are saved in the same directory where you run the script
+- Can be opened in Excel, Google Sheets, MATLAB, or Python for analysis
+- Manual save available anytime via "💾 Save Data" button
+
+## Which Version Should You Use?
+
+**Use Matplotlib Version if:**
+- ✅ You want 2D and 3D views with easy toggling
+- ✅ You don't want to install extra dependencies
+- ✅ You're tracking < 1000 points
+- ✅ You want everything in one window
+
+**Use PyVista Version if:**
+- ✅ You need smoother 3D rendering
+- ✅ You're tracking lots of data (1000-10000 points)
+- ✅ You want GPU acceleration
+- ✅ Your Matplotlib 3D view is choppy/slow
+- ✅ You want professional-grade 3D visualization
 
 ## Trick Variables Being Monitored
 
